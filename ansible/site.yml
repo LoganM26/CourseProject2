@@ -1,0 +1,64 @@
+---
+- hosts: all
+  become: true
+
+  tasks:
+    - name: Update all packages
+      yum:
+        name: "*"
+        state: latest
+
+    - name: Install Java 17 (Corretto)
+      yum:
+        name: java-17-amazon-corretto-headless
+        state: present
+
+    - name: Create 'minecraft' user
+      user:
+        name: minecraft
+        shell: /sbin/nologin
+        system: true
+
+    - name: Create server directory
+      file:
+        path: /srv/minecraft
+        state: directory
+        owner: minecraft
+        group: minecraft
+        mode: '0755'
+
+    - name: Download latest Minecraft server jar
+      become_user: minecraft
+      shell: |
+        META_URL="https://launchermeta.mojang.com/mc/game/version_manifest.json"
+        LATEST=$(curl -s $META_URL | jq -r '.latest.release')
+        OBJ_URL=$(curl -s https://launchermeta.mojang.com/v1/objects/$( \
+                  curl -s $META_URL | jq -r ".versions[] | select(.id==\"$LATEST\") | .url" \
+                ) | jq -r '.downloads.server.url')
+        curl -sSL -o /srv/minecraft/server.jar $OBJ_URL
+      args:
+        creates: /srv/minecraft/server.jar
+
+    - name: Accept EULA
+      copy:
+        dest: /srv/minecraft/eula.txt
+        content: "eula=true\n"
+        owner: minecraft
+        mode: '0644'
+
+    - name: Deploy systemd service file
+      template:
+        src: templates/minecraft.service.j2
+        dest: /etc/systemd/system/minecraft.service
+      notify: reload systemd
+
+    - name: Enable & start minecraft service
+      systemd:
+        name: minecraft
+        enabled: true
+        state: started
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: yes
